@@ -1,24 +1,55 @@
-name: Export ECK 2.2.0 arm64
+name: Export Multi Images arm64
 
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      images:
+        description: '镜像列表（逗号分隔，支持 tag）'
+        required: true
+        default: 'docker.elastic.co/eck/eck-operator:2.2.0'
+      compress:
+        description: '是否压缩'
+        required: true
+        default: 'true'
+        type: boolean
 
 jobs:
   export:
     runs-on: ubuntu-24.04-arm  # 原生 arm64 环境
-    
+
     steps:
-      - name: Pull image
+      - name: Parse and pull images
         run: |
-          docker pull docker.elastic.co/eck/eck-operator:2.2.0
-          
-      - name: Save and compress
+          IFS=',' read -ra IMG_LIST <<< "${{ github.event.inputs.images }}"
+          mkdir -p output
+
+          for img in "${IMG_LIST[@]}"; do
+            img=$(echo "$img" | xargs)  # 去空格
+            echo ">>> Pulling: $img"
+            docker pull "$img"
+
+            # 生成合法文件名：把 / 和 : 替换成 _
+            filename=$(echo "$img" | sed 's/[\/:]/_/g')
+
+            echo ">>> Saving: $img -> output/${filename}.tar"
+            docker save -o "output/${filename}.tar" "$img"
+          done
+
+          ls -lh output/
+
+      - name: Compress if enabled
+        if: ${{ github.event.inputs.compress == 'true' }}
         run: |
-          docker save docker.elastic.co/eck/eck-operator:2.2.0 | gzip > eck-operator-2.2.0-arm64.tar.gz
-          ls -lh eck-operator-2.2.0-arm64.tar.gz
-          
-      - name: Upload artifact
+          cd output
+          for f in *.tar; do
+            echo ">>> Compressing: $f"
+            gzip "$f"
+          done
+          ls -lh .
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: eck-operator-2.2.0-arm64
-          path: eck-operator-2.2.0-arm64.tar.gz
+          name: docker-images-arm64
+          path: output/*
           retention-days: 5
